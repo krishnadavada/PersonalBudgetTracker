@@ -1,0 +1,4 @@
+MIN_QUANTITY=0
+
+MIN_LIMIT=0
+module.exports={MIN_QUANTITY,MIN_LIMIT}
