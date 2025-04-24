@@ -18,11 +18,12 @@ const oStatus = {
     fetch:'Data fetched successfully !',
     user_exist:'User already exist!',
     invalid_budget:"Invalid budget limits. Daily, weekly, and monthly limits must be greater than zero and follow the hierarchy.",
-    add_budget:'Budget added successfully !',
+    budget_success:'Budget ## successfully !',
     expense:'expense ## successfully!',
     some_wrong:'Something went wrong !',
     internal_err:'Internal server error !',
-    budget_exist:"Budget already exists for this month"
+    budget_exist:"Budget already exists for this month",
+    not_exist:'## not exist!'
   }
   
   //function for send msg and replce ## to actual value

@@ -1,215 +1,296 @@
-const expanses = require("../models/expanseModel")
-const {createResponse,oMessage,oStatus}=require('../helpers/response')
-const inventory=require('../models/inventoryModel')
-const budget=require('../models/budgetModel')
+const expanses = require("../models/expanseModel");
+const { createResponse, oMessage, oStatus } = require("../helpers/response");
+const inventory = require("../models/inventoryModel");
+const budget = require("../models/budgetModel");
 const { MIN_QUANTITY } = require("../utils/var");
-const mongoose=require('mongoose')
+const mongoose = require("mongoose");
+const { validateObjectId } = require("../middlewares/validate");
 
-async function getAllExpense(req,res){
-  try{
-     const oExpenses=await expanses.find()
-     return createResponse( res, oStatus.OK, oMessage.fetch, null, oExpenses);
-  }
-  catch(err){
+async function getAllExpense(req, res) {
+  try {
+    const iuserId = req.user.iId;
+    const oExpenses = await expanses.find({ iUserId: iuserId });
+    if (oExpenses.length === 0) {
+      return createResponse(
+        res,
+        oStatus.NotFound,
+        oMessage.not_exist,
+        "expense"
+      );
+    }
+    return createResponse(res, oStatus.OK, oMessage.fetch, null, oExpenses);
+  } catch (err) {
     console.log(err);
-    return createResponse( res, oStatus.InternalServerError, oMessage.internal_err );
+    return createResponse(
+      res,
+      oStatus.InternalServerError,
+      oMessage.internal_err
+    );
   }
 }
 
-async function addExpense(req, res){
-    try {
-      const { oInventory } = req.body;
-      const iUserId = req.user.iId;
-  
-      if (!Array.isArray(oInventory) || oInventory.length === 0) {
-        return createResponse(res,oStatus.BadRequest,oMessage.invalid,'request body')
+async function addExpense(req, res) {
+  try {
+    const { oInventory } = req.body;
+    const iUserId = req.user.iId;
+
+    if (!Array.isArray(oInventory) || oInventory.length === 0) {
+      return createResponse(
+        res,
+        oStatus.BadRequest,
+        oMessage.invalid,
+        "request body"
+      );
+    }
+
+    // Get total expense amount from inventory data
+    let nTotalExpense = 0;
+    for (const item of oInventory) {
+      const oDbItem = await inventory.findById(item.iInventoryId);
+      if (!oDbItem) {
+        return res
+          .status(400)
+          .json({ message: `Inventory not found: ${item.iInventoryId}` });
       }
-  
-      // Get total expense amount from inventory data
-      let totalExpense = 0;
-      for (const item of oInventory) {
-        const dbItem = await inventory.findById(item.iInventoryId);
-        if (!dbItem) {
-          return res.status(400).json({ message: `Inventory not found: ${item.iInventoryId}` });
-        }
-  
-        if (item.nQuantity < MIN_QUANTITY) {
-          return res.status(400).json({ message: `Minimum quantity not met for: ${dbItem.sName}` });
-        }
-  
-        if (item.nQuantity > dbItem.nQuantityAvail) {
-          return res.status(400).json({
-            message: `Not enough quantity for ${dbItem.sName}. Available: ${dbItem.nQuantityAvail}, Requested: ${item.nQuantity}`
-          });
-        }
-  
-        totalExpense += dbItem.nPricePerItem * item.nQuantity;
+      if (item.nQuantity < MIN_QUANTITY) {
+        return res
+          .status(400)
+          .json({ message: `Minimum quantity not met for: ${oDbItem.sName}` });
       }
-  
-      // Time ranges
-      const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
-      startOfWeek.setHours(0, 0, 0, 0);
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 7);
-  
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  
-      // Get user's budget
-      const oBudget = await budget.findOne({ iUserId });
-      if (!oBudget) {
-        return createResponse(res, oStatus.NotFound, oMessage.not_found, 'budget');
-      }
-  
-      // Aggregate expenses
-      const [dailyTotal, weeklyTotal, monthlyTotal] = await Promise.all([
-        expanses.aggregate([
-          { $match: { iUserId: new mongoose.Types.ObjectId(iUserId), createdAt: { $gte: startOfDay, $lt: endOfDay } } },
-          { $unwind: "$oInventory" },
-          {
-            $lookup: {
-              from: "inventories",
-              localField: "oInventory.iInventoryId",
-              foreignField: "_id",
-              as: "invDetails"
-            }
-          },
-          { $unwind: "$invDetails" },
-          {
-            $group: {
-              _id: null,
-              total: {
-                $sum: { $multiply: ["$oInventory.nQuantity", "$invDetails.nPricePerItem"] }
-              }
-            }
-          }
-        ]),
-        expanses.aggregate([
-          { $match: { iUserId: new mongoose.Types.ObjectId(iUserId), createdAt: { $gte: startOfWeek, $lt: endOfWeek } } },
-          { $unwind: "$oInventory" },
-          {
-            $lookup: {
-              from: "inventories",
-              localField: "oInventory.iInventoryId",
-              foreignField: "_id",
-              as: "invDetails"
-            }
-          },
-          { $unwind: "$invDetails" },
-          {
-            $group: {
-              _id: null,
-              total: {
-                $sum: { $multiply: ["$oInventory.nQuantity", "$invDetails.nPricePerItem"] }
-              }
-            }
-          }
-        ]),
-        expanses.aggregate([
-          { $match: { iUserId: new mongoose.Types.ObjectId(iUserId), createdAt: { $gte: startOfMonth, $lt: endOfMonth } } },
-          { $unwind: "$oInventory" },
-          {
-            $lookup: {
-              from: "inventories",
-              localField: "oInventory.iInventoryId",
-              foreignField: "_id",
-              as: "invDetails"
-            }
-          },
-          { $unwind: "$invDetails" },
-          {
-            $group: {
-              _id: null,
-              total: {
-                $sum: { $multiply: ["$oInventory.nQuantity", "$invDetails.nPricePerItem"] }
-              }
-            }
-          }
-        ])
-      ]);
-  
-      const dailyUsed = dailyTotal[0]?.total || 0;
-      const weeklyUsed = weeklyTotal[0]?.total || 0;
-      const monthlyUsed = monthlyTotal[0]?.total || 0;
-  
-      const reasons = [];
-      if (dailyUsed + totalExpense > oBudget.nDailyLimit) {
-        reasons.push(`Daily limit exceeded. Limit: ${oBudget.nDailyLimit}, Current: ${dailyUsed}, Attempted: ${totalExpense}`);
-      }
-      if (weeklyUsed + totalExpense > oBudget.nWeeklyLimit) {
-        reasons.push(`Weekly limit exceeded. Limit: ${oBudget.nWeeklyLimit}, Current: ${weeklyUsed}, Attempted: ${totalExpense}`);
-      }
-      if (monthlyUsed + totalExpense > oBudget.nMonthlyLimit) {
-        reasons.push(`Monthly limit exceeded. Limit: ${oBudget.nMonthlyLimit}, Current: ${monthlyUsed}, Attempted: ${totalExpense}`);
-      }
-  
-      if (reasons.length > 0) {
-        // Add suggestion logic
-        const suggestions = [];
-        for (const item of oInventory) {
-          const dbItem = await inventory.findById(item.iInventoryId);
-          if (!dbItem) continue;
-  
-          const maxAffordableDaily = Math.floor((oBudget.nDailyLimit - dailyUsed) / dbItem.nPricePerItem);
-          const maxAffordableWeekly = Math.floor((oBudget.nWeeklyLimit - weeklyUsed) / dbItem.nPricePerItem);
-          const maxAffordableMonthly = Math.floor((oBudget.nMonthlyLimit - monthlyUsed) / dbItem.nPricePerItem);
-          const maxAllowed = Math.min(maxAffordableDaily, maxAffordableWeekly, maxAffordableMonthly);
-  
-          if (maxAllowed < item.nQuantity) {
-            suggestions.push({
-              sName: dbItem.sName,
-              suggestion: `Reduce quantity to ${maxAllowed} or remove this item`
-            });
-          }
-        }
-  
+      if (item.nQuantity > oDbItem.nQuantityAvail) {
         return res.status(400).json({
-          message: "Expense limit exceeded",
-          reasons,
-          suggestions
+          message: `Not enough quantity for ${oDbItem.sName}. Available: ${oDbItem.nQuantityAvail}, Requested: ${item.nQuantity}`,
         });
       }
-  
-      // Deduct inventory quantities
-      for (const item of oInventory) {
-        await inventory.updateOne(
-          { _id: item.iInventoryId },
-          { $inc: { nQuantityAvail: -item.nQuantity } }
+      nTotalExpense += oDbItem.nPricePerItem * item.nQuantity;
+    }
+
+    // Time ranges
+    const now = new Date();
+    const dStartOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const dEndOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1
+    );
+    const dStartOfWeek = new Date(now);
+    dStartOfWeek.setDate(now.getDate() - now.getDay());
+    dStartOfWeek.setHours(0, 0, 0, 0);
+    const dEndOfWeek = new Date(dStartOfWeek);
+    dEndOfWeek.setDate(dStartOfWeek.getDate() + 7);
+    const dStartOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const dEndOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    // Get budget for user
+    const oBudget = await budget.findOne({ iUserId });
+    if (!oBudget) {
+      return createResponse(
+        res,
+        oStatus.NotFound,
+        oMessage.not_found,
+        "budget"
+      );
+    }
+
+    // Get expenses in different ranges
+    const [oDailyExpenses, oWeeklyExpenses, oMonthlyExpenses] =
+      await Promise.all([
+        expanses.find({
+          iUserId,
+          createdAt: { $gte: dStartOfDay, $lt: dEndOfDay },
+        }),
+        expanses.find({
+          iUserId,
+          createdAt: { $gte: dStartOfWeek, $lt: dEndOfWeek },
+        }),
+        expanses.find({
+          iUserId,
+          createdAt: { $gte: dStartOfMonth, $lt: dEndOfMonth },
+        }),
+      ]);
+
+    // Calculate total
+    const calculateTotal = async (expenseList) => {
+      let nTotal = 0;
+      for (const expense of expenseList) {
+        for (const item of expense.oInventory) {
+          const oInv = await inventory.findById(item.iInventoryId);
+          if (oInv) {
+            nTotal += item.nQuantity * oInv.nPricePerItem;
+          }
+        }
+      }
+      return nTotal;
+    };
+
+    const [nDailyUsed, nWeeklyUsed, nMonthlyUsed] = await Promise.all([
+      calculateTotal(oDailyExpenses),
+      calculateTotal(oWeeklyExpenses),
+      calculateTotal(oMonthlyExpenses),
+    ]);
+
+    if (
+      nDailyUsed + nTotalExpense > oBudget.nDailyLimit ||
+      nWeeklyUsed + nTotalExpense > oBudget.nWeeklyLimit ||
+      nMonthlyUsed + nTotalExpense > oBudget.nMonthlyLimit
+    ) {
+      const aReasons = [];
+      if (nDailyUsed + nTotalExpense > oBudget.nDailyLimit) {
+        aReasons.push(
+          `Daily limit exceeded. Limit: ${oBudget.nDailyLimit}, Used: ${nDailyUsed}, Tried to use: ${nTotalExpense}`
         );
       }
-  
-      // Save expense
-      const newExpense = await expanses.create({ iUserId, oInventory });
-      return createResponse(res, oStatus.Created, oMessage.expense, 'created', newExpense);
-  
-    } catch (err) {
-      console.log(err);
-      return createResponse(res, oStatus.InternalServerError, oMessage.internal_err);
-    }
-  };
-  
+      if (nWeeklyUsed + nTotalExpense > oBudget.nWeeklyLimit) {
+        aReasons.push(
+          `Weekly limit exceeded. Limit: ${oBudget.nWeeklyLimit}, Used: ${nWeeklyUsed}, Tried to use: ${nTotalExpense}`
+        );
+      }
+      if (nMonthlyUsed + nTotalExpense > oBudget.nMonthlyLimit) {
+        aReasons.push(
+          `Monthly limit exceeded. Limit: ${oBudget.nMonthlyLimit}, Used: ${nMonthlyUsed}, Tried to use: ${nTotalExpense}`
+        );
+      }
 
-async function deleteExpense(req,res){
-    try{
-    const { iId } = req.params;
+      // Calculate maximum budget
+      const nMaxAvailable = Math.min(
+        oBudget.nDailyLimit - nDailyUsed,
+        oBudget.nWeeklyLimit - nWeeklyUsed,
+        oBudget.nMonthlyLimit - nMonthlyUsed
+      );
 
-    const deleted = await expanses.findByIdAndDelete(iId);
+      // Load inventory details once
+      const oInventoryDetails = await Promise.all(
+        oInventory.map((item) => inventory.findById(item.iInventoryId))
+      );
 
-    if (!deleted) {
-      return createResponse(res,oStatus.NotFound,oMessage.not_found,'expense')
+      const oItems = oInventory.map((item, idx) => {
+        const dbItem = oInventoryDetails[idx];
+        return {
+          ...item,
+          sName: dbItem?.sName || "Unknown",
+          nPrice: dbItem?.nPricePerItem || 0,
+          originalQty: item.nQuantity,
+          reducedQty: item.nQuantity,
+        };
+      });
+
+      // Sort oItems by price descending order
+      oItems.sort((a, b) => b.nPrice - a.nPrice);
+
+      // Current total
+      let currentTotal = oItems.reduce(
+        (sum, item) => sum + item.nPrice * item.reducedQty,
+        0
+      );
+
+      // Reduce oItems until total fits
+      for (const item of oItems) {
+        while (item.reducedQty > 0 && currentTotal > nMaxAvailable) {
+          item.reducedQty -= 1;
+          currentTotal -= item.nPrice;
+        }
+      }
+
+      const aSuggestions = oItems.map((item) => {
+        if (item.reducedQty < item.originalQty) {
+          return {
+            sName: item.sName,
+            sSuggestion: `Reduce quantity from ${item.originalQty} to ${item.reducedQty}`,
+          };
+        } else {
+          return {
+            sName: item.sName,
+            sSuggestion: "No change needed for this item",
+          };
+        }
+      });
+
+      return res.status(400).json({
+        message: "Expense limit exceeded",
+        aReasons,
+        aSuggestions,
+      });
     }
 
-    return createResponse(res,oStatus.OK,oMessage.expense,'deleted',deleted)
+    // decrese inventory quantities
+    for (const item of oInventory) {
+      await inventory.updateOne(
+        { _id: item.iInventoryId },
+        { $inc: { nQuantityAvail: -item.nQuantity } }
+      );
     }
-    catch(err){
-     console.log(err);
-     return createResponse( res, oStatus.InternalServerError, oMessage.internal_err );
-    }
+
+    // Save expense
+    const nAmount = nTotalExpense;
+    const oNewExpense = await expanses.create({ iUserId, oInventory, nAmount });
+
+    return createResponse(
+      res,
+      oStatus.Created,
+      oMessage.expense,
+      "created",
+      oNewExpense
+    );
+  } catch (err) {
+    console.log(err);
+    return createResponse(
+      res,
+      oStatus.InternalServerError,
+      oMessage.internal_err
+    );
+  }
 }
 
-module.exports={addExpense,getAllExpense,deleteExpense}
+async function deleteExpense(req, res) {
+  try {
+    const { iId } = req.params;
+
+    const oExpense = await expanses.findOne({
+      _id: iId,
+      iUserId: req.user.iId,
+      isDeleted: { $eq: true },
+    });
+
+    if (!oExpense) {
+      return createResponse(
+        res,
+        oStatus.NotFound,
+        oMessage.not_found,
+        "expense"
+      );
+    }
+
+    const deletedAtUTC = new Date().toISOString();
+
+    const deleted = await expanses.findOneAndUpdate(
+      { _id: iId },
+      {
+        $set: {
+          bIsDeleted: true,
+          dDeletedAt: deletedAtUTC,
+        },
+      }
+    );
+
+    return createResponse(
+      res,
+      oStatus.OK,
+      oMessage.expense,
+      "deleted",
+      deleted
+    );
+  } catch (err) {
+    console.log(err);
+    return createResponse(
+      res,
+      oStatus.InternalServerError,
+      oMessage.internal_err
+    );
+  }
+}
+
+module.exports = { addExpense, getAllExpense, deleteExpense };

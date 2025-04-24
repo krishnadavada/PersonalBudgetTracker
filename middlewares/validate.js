@@ -1,4 +1,5 @@
 const { param,body,validationResult }=require("express-validator");
+const mongoose=require('mongoose')
 
 const aLoginData=[
     body('sEmail').notEmpty().withMessage('Email is required !').bail().isEmail().normalizeEmail().withMessage('Invalid data type of email !').bail(),
@@ -18,10 +19,6 @@ aBudgetData=[
     body('nMonthlyLimit').notEmpty().withMessage('monthly limit is required !').bail().isNumeric().withMessage('monthly limit must be a number').bail(),
 ]
 
-aIdExpense=[
-    param('iId').custom(value => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid expense ID !'),
-]
-
 aExpenseData=[
 
   body('oInventory')
@@ -34,6 +31,10 @@ aExpenseData=[
 
 ]
 
+aIdExpense=[
+  param('iId').isMongoId().withMessage('Invalid ObjectId'),
+]
+
 function validateReq(req,res,next){
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -42,4 +43,5 @@ function validateReq(req,res,next){
     next();
 }
 
-module.exports={aLoginData,aRegisterData,validateReq,aBudgetData,aIdExpense,aExpenseData}
+
+module.exports={aLoginData,aRegisterData,validateReq,aIdExpense,aBudgetData,aExpenseData}

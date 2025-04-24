@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const users=require('../models/userModel');
 const { oStatus, oMessage,createResponse } = require("../helpers/response");
 const JWT_SECRET = process.env.JWT_SECRET;
+const mongoose = require("mongoose");
 
 async function login(req,res){
     const { sEmail, sPassword } = req.body;
